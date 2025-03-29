@@ -9,11 +9,8 @@ import { HeatmapDto } from './dto/heatmap.dto';
 export class AppService {
   /**
    * Heatmap logic:
-   *  - Takes bounding region (lat/lon) + a timestamp
-   *  - Optionally filters by altitude range (minAlt, maxAlt)
-   *  - Optionally uses zoom to throttle results
-   *  - Optionally filters by "types" array (only certain type codes)
-   *  - Also has timeDirection (but not implemented in logic currently)
+   *  - Takes optional bounding region (lat/lon).
+   *  - minAlt, maxAlt са задължителни.
    *  - Fetches sats from KeepTrack
    *  - Propagates each to `timestamp`
    *  - Converts ECI -> LLA
@@ -92,21 +89,14 @@ export class AppService {
           const lonDeg = satellite.degreesLong(positionGd.longitude);
           const altKm = positionGd.height;
 
-          // 5. Filter by bounding box
-          if (
-            latDeg < minLat ||
-            latDeg > maxLat ||
-            lonDeg < minLon ||
-            lonDeg > maxLon
-          ) {
-            continue;
-          }
+          // 5. Filter by bounding box only if provided
+          if (minLat !== undefined && latDeg < minLat) continue;
+          if (maxLat !== undefined && latDeg > maxLat) continue;
+          if (minLon !== undefined && lonDeg < minLon) continue;
+          if (maxLon !== undefined && lonDeg > maxLon) continue;
 
-          // 6. Filter by altitude if minAlt or maxAlt are provided
-          if (typeof minAlt === 'number' && altKm < minAlt) {
-            continue;
-          }
-          if (typeof maxAlt === 'number' && altKm > maxAlt) {
+          // 6. Filter by altitude (now required)
+          if (altKm < minAlt || altKm > maxAlt) {
             continue;
           }
 
