@@ -11,34 +11,38 @@ export class HeatmapDto {
   @ApiProperty({
     example: -10,
     description: 'Minimum latitude of the bounding box',
+    required: false,
   })
   @IsNumber()
-  @IsNotEmpty()
-  minLat: number;
+  @IsOptional()
+  minLat?: number;
 
   @ApiProperty({
     example: 10,
     description: 'Maximum latitude of the bounding box',
+    required: false,
   })
   @IsNumber()
-  @IsNotEmpty()
-  maxLat: number;
+  @IsOptional()
+  maxLat?: number;
 
   @ApiProperty({
     example: -20,
     description: 'Minimum longitude of the bounding box',
+    required: false,
   })
   @IsNumber()
-  @IsNotEmpty()
-  minLon: number;
+  @IsOptional()
+  minLon?: number;
 
   @ApiProperty({
     example: 20,
     description: 'Maximum longitude of the bounding box',
+    required: false,
   })
   @IsNumber()
-  @IsNotEmpty()
-  maxLon: number;
+  @IsOptional()
+  maxLon?: number;
 
   @ApiProperty({
     example: '2026-01-01T00:00:00Z',
@@ -51,20 +55,20 @@ export class HeatmapDto {
   @ApiProperty({
     example: 0,
     description: 'Minimum altitude (km) to include',
-    required: false,
+    required: true,
   })
   @IsNumber()
-  @IsOptional()
-  minAlt?: number;
+  @IsNotEmpty()
+  minAlt: number;
 
   @ApiProperty({
     example: 2000,
     description: 'Maximum altitude (km) to include',
-    required: false,
+    required: true,
   })
   @IsNumber()
-  @IsOptional()
-  maxAlt?: number;
+  @IsNotEmpty()
+  maxAlt: number;
 
   @ApiProperty({
     example: 5,
@@ -87,7 +91,8 @@ export class HeatmapDto {
   @ApiProperty({
     type: [Number],
     required: false,
-    description: 'Array of satellite "type" codes to include, e.g. [3] for debris or [0,3] for both',
+    description:
+      'Array of satellite "type" codes to include, e.g. [3] for debris or [0,3] for both',
     example: [0, 3],
   })
   @IsArray()
