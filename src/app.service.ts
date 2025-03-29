@@ -18,7 +18,7 @@ export class AppService {
    *  - Propagates each to `timestamp`
    *  - Converts ECI -> LLA
    *  - Filters those within bounding box & altitude constraints
-   *  - Returns an array of lat/lon points or aggregated counts
+   *  - Returns GeoJSON FeatureCollection
    */
   async heatmap(heatmapDto: HeatmapDto) {
     const {
@@ -130,11 +130,29 @@ export class AppService {
         }
       }
 
-      // 9. Return final result
-      return {
-        count: results.length,
-        satellites: results,
+      // 9. Convert results to GeoJSON FeatureCollection
+      const geoJson = {
+        type: 'FeatureCollection',
+        crs: {
+          type: 'name',
+          properties: {
+            name: 'urn:ogc:def:crs:OGC:1.3:CRS84',
+          },
+        },
+        features: results.map((sat) => ({
+          type: 'Feature',
+          properties: {
+            name: sat.name,
+            alt: sat.alt,
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [sat.lon, sat.lat, sat.alt],
+          },
+        })),
       };
+
+      return geoJson;
     } catch (err) {
       throw new HttpException(err.message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
