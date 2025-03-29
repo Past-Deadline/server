@@ -1,14 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Enable global validation using class-validator
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+
   // Swagger configuration
   const config = new DocumentBuilder()
-    .setTitle('Satellite Debris API')
-    .setDescription('API for retrieving and filtering satellite debris from keeptrack.space')
+    .setTitle('Satellite Heatmap API')
+    .setDescription('API for retrieving and filtering satellite data from keeptrack.space')
     .setVersion('1.0')
     .build();
 

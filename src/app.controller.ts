@@ -1,18 +1,19 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Post, Body } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+
 import { AppService } from './app.service';
-import { DebrisResponse } from './dto/debris-response.dto';
+import { HeatmapDto } from './dto/heatmap.dto';
 
 @ApiTags('satellites')
 @Controller('satellites')
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @Get('debris')
+  @Post('heatmap')
   @ApiOperation({
-    summary: 'Retrieves debris data 7 days in the future from keeptrack.space',
+    summary: 'Returns positions of satellites (optionally filtered by type) within a bounding box and altitude range at a given time',
   })
-  async getDebris(): Promise<DebrisResponse> {
-    return this.appService.getDebris();
+  async heatmap(@Body() heatmapDto: HeatmapDto) {
+    return this.appService.heatmap(heatmapDto);
   }
 }

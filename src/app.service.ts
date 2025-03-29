@@ -3,13 +3,39 @@ import fetch from 'cross-fetch';
 import * as satellite from 'satellite.js';
 
 import { KeepTrackSatellite } from './dto/keeptrack-satellite.dto';
-import { DebrisData, DebrisResponse } from './dto/debris-response.dto';
+import { HeatmapDto } from './dto/heatmap.dto';
 
 @Injectable()
 export class AppService {
-  async getDebris(): Promise<DebrisResponse> {
+  /**
+   * Heatmap logic:
+   *  - Takes bounding region (lat/lon) + a timestamp
+   *  - Optionally filters by altitude range (minAlt, maxAlt)
+   *  - Optionally uses zoom to throttle results
+   *  - Optionally filters by "types" array (only certain type codes)
+   *  - Also has timeDirection (but not implemented in logic currently)
+   *  - Fetches sats from KeepTrack
+   *  - Propagates each to `timestamp`
+   *  - Converts ECI -> LLA
+   *  - Filters those within bounding box & altitude constraints
+   *  - Returns an array of lat/lon points or aggregated counts
+   */
+  async heatmap(heatmapDto: HeatmapDto) {
+    const {
+      minLat,
+      maxLat,
+      minLon,
+      maxLon,
+      timestamp,
+      minAlt,
+      maxAlt,
+      zoom,
+      types,
+      timeDirection, // currently not used, but available
+    } = heatmapDto;
+
     try {
-      // 1. Fetch data from keeptrack.space
+      // 1. Fetch satellites from keeptrack
       const res = await fetch('https://api.keeptrack.space/v2/sats');
       if (!res.ok) {
         throw new HttpException(
@@ -18,9 +44,7 @@ export class AppService {
         );
       }
 
-      // 2. Parse the response as an array of KeepTrackSatellite
       const data: KeepTrackSatellite[] = await res.json();
-
       if (!Array.isArray(data)) {
         throw new HttpException(
           'Expected an array of satellites',
@@ -28,53 +52,90 @@ export class AppService {
         );
       }
 
-      // 3. Date 7 days in the future
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + 7);
+      // 2. Prepare date object from timestamp
+      const targetDate = new Date(timestamp);
 
-      const filtered: DebrisData[] = [];
+      // We'll store results in this array
+      const results: Array<{
+        name: string;
+        lat: number;
+        lon: number;
+        alt: number;
+      }> = [];
 
-      // 4. Iterate over the array
-      for (const obj of data) {
-        const { tle1, tle2, name, type } = obj;
-
-        // Only type == 3 => debris
-        if (type !== 3) {
-          continue;
-        }
-
+      // 3. Loop over each satellite from KeepTrack
+      for (const sat of data) {
         try {
-          // Convert TLE lines to satellite record
-          const satrec = satellite.twoline2satrec(tle1, tle2);
+          // (Optional) Filter by "type" array if provided
+          if (Array.isArray(types) && types.length > 0) {
+            if (!types.includes(sat.type)) {
+              // skip if this sat's type is not in the allowed set
+              continue;
+            }
+          }
 
-          // Propagate for the future date
-          const { position, velocity } = satellite.propagate(satrec, futureDate);
-
-          // If position is boolean, skip
-          if (position === true || position === false) {
+          // Convert TLE => satrec
+          const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
+          const posVel = satellite.propagate(satrec, targetDate);
+          if (!posVel.position || posVel.position === true) {
+            // skip invalid or unpropagatable TLE
             continue;
           }
 
-          // Now `position` is guaranteed to be EciVec3<number>
-          const { x, y, z } = position;
+          // 4. Convert ECI -> Geodetic
+          const positionEci = posVel.position;
+          const gmst = satellite.gstime(targetDate);
+          const positionGd = satellite.eciToGeodetic(positionEci, gmst);
 
+          // lat/lon in radians, alt in km
+          const latDeg = satellite.degreesLat(positionGd.latitude);
+          const lonDeg = satellite.degreesLong(positionGd.longitude);
+          const altKm = positionGd.height;
 
-          filtered.push({
-            name,
-            x: parseFloat(x.toFixed(2)),
-            y: parseFloat(y.toFixed(2)),
-            z: parseFloat(z.toFixed(2)),
+          // 5. Filter by bounding box
+          if (
+            latDeg < minLat ||
+            latDeg > maxLat ||
+            lonDeg < minLon ||
+            lonDeg > maxLon
+          ) {
+            continue;
+          }
+
+          // 6. Filter by altitude if minAlt or maxAlt are provided
+          if (typeof minAlt === 'number' && altKm < minAlt) {
+            continue;
+          }
+          if (typeof maxAlt === 'number' && altKm > maxAlt) {
+            continue;
+          }
+
+          // 7. Optional zoom logic: skip satellites if zoom is too low
+          if (zoom !== undefined && zoom < 3) {
+            // Example: skip ~70% to lighten load
+            if (Math.random() < 0.7) {
+              continue;
+            }
+          }
+
+          // 8. All filters passed => add to results
+          results.push({
+            name: sat.name,
+            lat: parseFloat(latDeg.toFixed(4)),
+            lon: parseFloat(lonDeg.toFixed(4)),
+            alt: parseFloat(altKm.toFixed(2)),
           });
-        } catch (err) {
-          // If TLE invalid or other errors, skip
+        } catch (error) {
+          // skip any invalid TLE or other errors
         }
       }
 
-      // 5. Construct final response
-      const message = `🛰️ Космически отпадък след 7 дни: ${filtered.length} обекта (тип 3)`;
-      return { message, data: filtered };
+      // 9. Return final result
+      return {
+        count: results.length,
+        satellites: results,
+      };
     } catch (err) {
-      // 6. Rethrow as 500 internal if unknown
       throw new HttpException(err.message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
