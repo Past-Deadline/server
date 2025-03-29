@@ -1,12 +1,18 @@
 import { Controller, Get } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppService } from './app.service';
+import { DebrisResponse } from './dto/debris-response.dto';
 
-@Controller()
+@ApiTags('satellites')
+@Controller('satellites')
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  @Get('debris')
+  @ApiOperation({
+    summary: 'Retrieves debris data 7 days in the future from keeptrack.space',
+  })
+  async getDebris(): Promise<DebrisResponse> {
+    return this.appService.getDebris();
   }
 }
