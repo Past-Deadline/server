@@ -6,6 +6,12 @@ import { ValidationPipe } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  app.enableCors({
+    origin: '*',  // Allow requests from all origins, you can limit this to specific origins
+    methods: 'GET,POST,PUT,PATCH,DELETE,OPTIONS',  // Allow these methods
+    allowedHeaders: 'Content-Type, Authorization',  // Allow specific headers
+  });
+  
   // Enable global validation using class-validator
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
