@@ -40,7 +40,13 @@ export class OrbitService {
     const coe = this.rvToCoe(r, v, this.MU_EARTH);
 
     // 2) Format them into TLE lines
-    const { line1, line2 } = this.exportTle(coe, epoch, satNum, classification, satelliteName);
+    const { line1, line2 } = this.exportTle(
+      coe,
+      epoch,
+      satNum,
+      classification,
+      satelliteName,
+    );
 
     return { line1, line2 };
   }
@@ -122,7 +128,7 @@ export class OrbitService {
     }
 
     // Semi-major axis
-    const energy = 0.5 * V * V - (mu / R);
+    const energy = 0.5 * V * V - mu / R;
     const a = -mu / (2 * energy);
 
     // Convert true anomaly -> eccentric anomaly E -> mean anomaly M
@@ -155,11 +161,11 @@ export class OrbitService {
     return {
       semiMajorAxis: a,
       eccentricity: e,
-      inclination: i,         // radians
-      raan: Omega,            // radians
-      argOfPerigee: argp,     // radians
-      meanAnomaly: M,         // radians
-      meanMotion: nRevDay,    // rev/day
+      inclination: i, // radians
+      raan: Omega, // radians
+      argOfPerigee: argp, // radians
+      meanAnomaly: M, // radians
+      meanMotion: nRevDay, // rev/day
     };
   }
 
@@ -171,11 +177,11 @@ export class OrbitService {
     coe: {
       semiMajorAxis: number;
       eccentricity: number;
-      inclination: number;   // radians
-      raan: number;          // radians
-      argOfPerigee: number;  // radians
-      meanAnomaly: number;   // radians
-      meanMotion: number;    // rev/day
+      inclination: number; // radians
+      raan: number; // radians
+      argOfPerigee: number; // radians
+      meanAnomaly: number; // radians
+      meanMotion: number; // rev/day
     },
     epoch: Date,
     satNum: number,
@@ -211,11 +217,11 @@ export class OrbitService {
 
     let line1 =
       `1 ${line1SatNum}${classification} ` + // e.g. "1 99999U "
-      `${epochStr} ` +                      // e.g. "25089.12345678 "
-      `${ndot_str} ` +                      // .00000000
-      `${nddot_str} ` +                     // 00000-0
-      `${bstar_str} ` +                     // 00000-0
-      ` 0  9999`;                            // ephemeris type 0, element set # 9999
+      `${epochStr} ` + // e.g. "25089.12345678 "
+      `${ndot_str} ` + // .00000000
+      `${nddot_str} ` + // 00000-0
+      `${bstar_str} ` + // 00000-0
+      ` 0  9999`; // ephemeris type 0, element set # 9999
 
     // ==============
     // 2) Format line 2
