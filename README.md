@@ -1,99 +1,267 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Space Guard
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+**Team Name:** Past Deadline  
+**Hackathon:** AUBG Hackathon 2025  
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## Table of Contents
+1. [Project Overview](#project-overview)
+2. [Features Summary](#features-summary)
+3. [Tech Stack](#tech-stack)
+4. [Folder Structure](#folder-structure)
+5. [Installation & Run](#installation--run)
+6. [API Endpoints](#api-endpoints)
+7. [Detailed Code Explanation](#detailed-code-explanation)
+   - [DTOs (Data Transfer Objects)](#dtos-data-transfer-objects)
+   - [Utilities](#utilities)
+   - [Controllers](#controllers)
+   - [Services](#services)
+   - [Main Module & Bootstrap](#main-module--bootstrap)
+8. [API Documentation](#api-documentation)
+9. [License](#license)
+10. [Authors / Team Members](#authors--team-members)
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+---
 
-## Project setup
+## Project Overview
 
-```bash
-$ npm install
+**Space Guard** is an API built with [NestJS](https://nestjs.com/) and [TypeScript](https://www.typescriptlang.org/) to analyze satellite orbits and help payload teams find commercial rocket launches that may intersect those orbits. Additionally, it offers a **heatmap** view of satellite positions at a specified time, filtered by altitude range, satellite type, and geographic bounding region.
+
+This project was developed for the **AUBG Hackathon 2025** by the team **Past Deadline**.
+
+---
+
+## Features Summary
+
+1. **Heatmap**  
+   - Obtain real-time or specified-time satellite positions, filtered by bounding box, altitude, and satellite type.
+
+2. **Schedule**  
+   - Based on a target orbit (currently supporting LEO), time window, and points of interest, the system suggests suitable commercial rocket launches that can intercept satellites of interest.
+
+3. **Swagger UI**  
+   - Auto-generated documentation at /api for easy interaction with the endpoints.
+
+---
+
+## Tech Stack
+
+- **NestJS** – Backend framework (TypeScript-based)
+- **TypeScript** – Strongly typed JavaScript superset
+- **Satellite.js** – Orbit computations and transformations (ECI <-> LLA, TLE propagation, etc.)
+- **Math.js** – Vector and matrix math operations (useful for orbital mechanics)
+- **Swagger** – API documentation generation
+- **Node.js** / **npm** – Runtime and package manager
+
+---
+
+## Folder Structure
+
+```
+/Users/vladimirpasev/Code/hackaubg/server
+└── src
+    ├── dto
+    │   ├── heatmap.dto.ts              # DTO for Heatmap request payload
+    │   ├── keeptrack-satellite.dto.ts  # Interface for KeepTrack satellite objects
+    │   └── ScheduleRequirements.dto.ts # DTO for Scheduling request payload
+    ├── utils
+    │   └── getKeplerianFromRV.ts       # Helper function to derive Keplerian elements from R/V vectors
+    ├── app.controller.ts               # Defines the HTTP endpoints (/v01/heatmap, /v01/schedule)
+    ├── app.module.ts                   # Root application module
+    ├── app.service.ts                  # Core logic for satellite retrieval and heatmap filtering
+    ├── main.ts                         # Application entry point (bootstraps NestJS, sets up Swagger)
+    └── schedule.service.ts             # Scheduling logic (rocket launch data, orbit intersection checks)
 ```
 
-## Compile and run the project
+---
+
+## Installation & Run
+
+1. **Clone or Download** the repository.
+2. **Install Dependencies**:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
 ```
 
-## Run tests
+3. **Run in Development Mode**:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run start:dev
 ```
 
-## Deployment
+By default, the server listens on http://localhost:3000.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+**Note:** This project relies on external data sources:
+- Satellite data: https://api.keeptrack.space/v2/sats
+- Upcoming rocket launches: https://ll.thespacedevs.com/2.0.0/launch/upcoming/
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Ensure you have a stable internet connection when running the server.
 
-```bash
-$ npm install -g mau
-$ mau deploy
+---
+
+## API Endpoints
+
+| Endpoint         | Method | Description                                                                 |
+|------------------|--------|-----------------------------------------------------------------------------|
+| `/v01/heatmap`   | POST   | Returns satellite positions in GeoJSON format for a specific timestamp and filters |
+| `/v01/schedule`  | POST   | Returns commercial rocket launches that intersect with targeted orbits          |
+
+**Swagger UI**: [http://localhost:3000/api](http://localhost:3000/api)
+
+---
+
+## Detailed Code Explanation
+
+### DTOs (Data Transfer Objects)
+
+**heatmap.dto.ts**
+```ts
+export class HeatmapDto {
+  minLat?: number;
+  maxLat?: number;
+  minLon?: number;
+  maxLon?: number;
+  timestamp: string;
+  minAlt: number;
+  maxAlt: number;
+  types?: (number | string)[];
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**ScheduleRequirements.dto.ts**
+```ts
+export class TImeFrame {
+  start: string;
+  end: string;
+}
 
-## Resources
+export class ScheduleRequirementsDTO {
+  time_frame: TImeFrame;
+  orbit: string;
+  points_of_interest?: Array<[number, number, number]>;
+}
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+**keeptrack-satellite.dto.ts**
+```ts
+export interface KeepTrackSatellite {
+  tle1: string;
+  tle2: string;
+  name: string;
+  type: number;
+}
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+---
 
-## Support
+### Utilities
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+**getKeplerianFromRV.ts**
 
-## Stay in touch
+- Computes orbital elements from R/V vectors using mathjs
+- Uses Earth’s gravitational parameter: `mu = 398600.4418 km^3/s^2`
+- Outputs: inclination, RAAN, eccentricity, argument of perigee, true anomaly
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+---
+
+### Controllers
+
+**app.controller.ts**
+```ts
+@Controller('v01')
+export class AppController {
+  @Post('heatmap')
+  async heatmap(@Body() heatmapDto: HeatmapDto) {
+    return this.appService.heatmap(heatmapDto);
+  }
+
+  @Post('schedule')
+  async schedule(@Body() requirements: ScheduleRequirementsDTO) {
+    return this.scheduleService.schedule({ ...requirements });
+  }
+}
+```
+
+---
+
+### Services
+
+**app.service.ts** – Heatmap Logic
+- Fetch satellites from KeepTrack
+- Propagate to requested timestamp
+- Convert to geodetic coords
+- Filter by bbox, altitude, type
+- Output GeoJSON FeatureCollection
+
+**schedule.service.ts** – Scheduling Logic
+- Fetch launch data from SpaceDevs
+- Estimate LEO entry in ECI
+- Generate candidate orbits
+- Discretize both rocket and satellite orbits
+- Check distance < 28 km to consider interception
+- Return suitable launches
+
+---
+
+### Main Module & Bootstrap
+
+**app.module.ts**
+```ts
+@Module({
+  imports: [],
+  controllers: [AppController],
+  providers: [AppService, ScheduleService],
+})
+export class AppModule {}
+```
+
+**main.ts**
+```ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.enableCors();
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+
+  const config = new DocumentBuilder()
+    .setTitle('Satellite Heatmap API')
+    .setDescription('API for retrieving and filtering satellite data from keeptrack.space')
+    .setVersion('1.0')
+    .build();
+
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, document);
+
+  await app.listen(3000);
+}
+```
+
+---
+
+## API Documentation
+
+After you start the server (`npm run start:dev`), open:
+[http://localhost:3000/api](http://localhost:3000/api)  
+Interact with the endpoints, see request/response formats, and explore auto-generated docs.
+
+---
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+This project is licensed under the MIT License. You are free to use, modify, and distribute this project as per the terms of the MIT license.
+
+---
+
+## Authors / Team Members
+
+**Past Deadline** (AUBG Hackathon 2025):
+- Nikola Andreev
+- Vladimir Pasev
+- Nikola Velikov
+- Stoyan Chorbov
+- Alex Nikolov
+- Ivana Likova
+
+We hope **Space Guard** helps you explore orbit scheduling and satellite data with ease! Feel free to reach out or open an issue in the repository.
