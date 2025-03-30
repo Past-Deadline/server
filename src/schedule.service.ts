@@ -202,23 +202,27 @@ export class ScheduleService {
       );
     }
 
+    const objects: Array<{ satelite: KeepTrackSatellite; orbit: Vec3[] }> =
+      data.map((sat) => ({
+        satelite: sat,
+        orbit: this.generateEllipseFromTLE(
+          sat.tle1,
+          sat.tle2,
+          this.SAMPLES_PER_ORBIT,
+        ),
+      }));
+
+    console.log('The objects are: ');
+    console.log(objects);
+
     return opts_for_orbiting.map((opt) => {
       const point = opt.point;
       const intercepted: Array<KeepTrackSatellite> = [];
-      data.forEach((sat) => {
-        if (
-          this.checkOrbitIntersection(
-            opt.orbit,
-            this.generateEllipseFromTLE(
-              sat.tle1,
-              sat.tle2,
-              this.SAMPLES_PER_ORBIT,
-            ),
-          )
-        ) {
-          intercepted.push(sat);
+      for (const obj of objects) {
+        if (this.checkOrbitIntersection(opt.orbit, obj.orbit)) {
+          intercepted.push({ ...obj.satelite });
         }
-      });
+      }
 
       console.log('The intercepted for this point are: ');
       console.log(intercepted);
@@ -287,6 +291,10 @@ export class ScheduleService {
         points.push([positionEci.x, positionEci.y, positionEci.z]);
       }
     }
+
+    console.log('The points are: ');
+    console.log(points.toString());
+    console.log('---');
 
     return points;
   }
