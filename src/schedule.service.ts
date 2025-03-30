@@ -1,25 +1,11 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { Vector3 } from 'three';
 import * as satellite from 'satellite.js';
+import { cross, norm, multiply, subtract, add, dot } from 'mathjs';
 import {
-  cross,
-  norm,
-  multiply,
-  divide,
-  subtract,
-  add,
-  BigNumber,
-  dot,
-} from 'mathjs';
-import {
-  TLE,
-  PointOfOrbiting,
   ScheduleRequirementsDTO,
   TImeFrame,
   Vec3,
 } from './dto/ScheduleRequirements.dto';
-import { OrbitService } from './orbit.service';
-import { getKeplerianFromRV } from './utils/getKeplerianFromRV';
 import fetch from 'cross-fetch';
 import { KeepTrackSatellite } from './dto/keeptrack-satellite.dto';
 
@@ -32,9 +18,8 @@ export class ScheduleService {
 
   INTERVAL_DAYS = 3;
   TOTAL_MONTHS = 6;
-  SAMPLES_PER_ORBIT = 100;
-
-  constructor(private readonly orbitService: OrbitService) {}
+  SAMPLES_PER_ORBIT = 16;
+  TRESHOLD_KM = 30;
 
   // Normalize a vector
   normalize(v: Vec3): Vec3 {
@@ -158,7 +143,7 @@ export class ScheduleService {
 
       const launchDate = new Date(
         (new Date(launch.window_start).getTime() +
-          new Date(launch.window_start).getTime()) /
+          new Date(launch.window_end).getTime()) /
           2,
       );
       const startDate = new Date(time_frame.start);
@@ -182,7 +167,10 @@ export class ScheduleService {
     Array<{
       point: Vec3;
       launch: any;
-      interceptions: Array<KeepTrackSatellite>;
+      interceptions: Array<{
+        sat: KeepTrackSatellite;
+        interceptions: { poi: Vec3; distance: number }[];
+      }>;
       interceptions_count: number;
     }>
   > {
@@ -212,15 +200,16 @@ export class ScheduleService {
         ),
       }));
 
-    console.log('The objects are: ');
-    console.log(objects);
-
     return opts_for_orbiting.map((opt) => {
       const point = opt.point;
-      const intercepted: Array<KeepTrackSatellite> = [];
+      const intercepted: Array<{
+        sat: KeepTrackSatellite;
+        interceptions: { poi: Vec3; distance: number }[];
+      }> = [];
       for (const obj of objects) {
-        if (this.checkOrbitIntersection(opt.orbit, obj.orbit)) {
-          intercepted.push({ ...obj.satelite });
+        const interceptions = this.checkOrbitIntersection(opt.orbit, obj.orbit);
+        if (interceptions.length > 0) {
+          intercepted.push({ sat: obj.satelite, interceptions });
         }
       }
 
@@ -229,7 +218,19 @@ export class ScheduleService {
 
       return {
         point: point,
-        launch: opt.launch,
+        launch: {
+          window_start: opt.launch.window_start,
+          window_end: opt.launch.window_end,
+          rocket: opt.launch.rocket.configuration.family,
+          name: opt.launch.name,
+          service_provider: opt.launch.launch_service_provider.name,
+          rocket_anme: opt.launch.rocket.configuration.name,
+          country: opt.launch.pad.location.country_code,
+          pad: {
+            latitude: opt.launch.pad.latitude,
+            longitude: opt.launch.pad.longitude,
+          },
+        },
         interceptions: intercepted,
         interceptions_count: intercepted.length,
       };
@@ -239,30 +240,25 @@ export class ScheduleService {
   checkOrbitIntersection(
     orbit1: Vec3[],
     orbit2: Vec3[],
-    thresholdKm = 10,
-  ): boolean {
-    let intersepted = false;
+  ): { poi: Vec3; distance: number }[] {
+    let count = 0;
+    const interceptions: { poi: Vec3; distance: number }[] = [];
     for (const p1 of orbit1) {
       for (const p2 of orbit2) {
         const d = norm(subtract(p1, p2)) as number;
-        if (d < thresholdKm) {
-          const midPoint: Vec3 = [
-            (p1[0] + p2[0]) / 2,
-            (p1[1] + p2[1]) / 2,
-            (p1[2] + p2[2]) / 2,
-          ];
-          intersepted = true;
-          break;
+        if (d < this.TRESHOLD_KM) {
+          interceptions.push({
+            poi: p2,
+            distance: d,
+          });
+          if (count > 1) break;
+          count++;
         }
+        if (count > 1) break;
       }
     }
-    console.log(
-      'interception found: ' +
-        (intersepted === true
-          ? '=======================STAY AWAY================'
-          : 'safe'),
-    );
-    return intersepted;
+    if (count > 0) console.log(count + ' interceptions found!');
+    return interceptions;
   }
 
   generateEllipseFromTLE(
@@ -291,10 +287,6 @@ export class ScheduleService {
         points.push([positionEci.x, positionEci.y, positionEci.z]);
       }
     }
-
-    console.log('The points are: ');
-    console.log(points.toString());
-    console.log('---');
 
     return points;
   }
@@ -395,29 +387,26 @@ export class ScheduleService {
           launch.rocket.configuration.family,
         );
 
-        console.log('Geoedic POE:', geoedicPoe);
-
         const poe = this.geodeticToEci(
           geoedicPoe.latitude,
           geoedicPoe.longitude,
           this.ALTITUDE_AT_ENTRY,
           new Date(
             (new Date(launch.window_start).getTime() +
-              new Date(launch.window_start).getTime()) /
+              new Date(launch.window_end).getTime()) /
               2,
           ),
         );
-        console.log('POE:', poe);
         const orbit = this.generateEllipseFromTwoECI(
           poe,
           points_of_interest![0],
           this.ORBITAL_VELOCITY,
-          this.SAMPLES_PER_ORBIT,
+          Math.round(this.SAMPLES_PER_ORBIT * 1.5),
         );
         return {
           time: new Date(
             (new Date(launch.window_start).getTime() +
-              new Date(launch.window_start).getTime()) /
+              new Date(launch.window_end).getTime()) /
               2,
           ),
           point: poe,
@@ -426,17 +415,6 @@ export class ScheduleService {
         };
       },
     );
-
-    if (
-      !points_of_interest ||
-      !points_of_interest[0] ||
-      !points_of_interest[1]
-    ) {
-      throw new HttpException(
-        'Expecting two points of interest',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
 
     const calculated =
       await this.calculateInterceptionsForAll(points_of_orbiting);
