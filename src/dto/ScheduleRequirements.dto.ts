@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsNotEmpty,
   IsNotEmptyObject,
+  IsNumber,
   IsNumberString,
   IsObject,
   IsOptional,
@@ -9,14 +11,16 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-export class PointOfInterest {
+export type Vec3 = [number, number, number];
+
+export class TLE {
   @IsNotEmpty()
-  @IsNumberString()
-  latitude: string;
+  @IsString()
+  tle1: string;
 
   @IsNotEmpty()
-  @IsNumberString()
-  longitude: string;
+  @IsString()
+  tle2: string;
 }
 
 export class TImeFrame {
@@ -40,9 +44,8 @@ export class ScheduleRequirementsDTO {
   orbit: string;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => PointOfInterest)
-  point_of_interest?: PointOfInterest;
+  @IsArray()
+  points_of_interest?: Array<Vec3>;
 }
 
 export class PointOfOrbiting {

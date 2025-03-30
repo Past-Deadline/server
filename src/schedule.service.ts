@@ -1,56 +1,108 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { Vector3 } from 'three';
+import * as satellite from 'satellite.js';
 import {
-  PointOfInterest,
+  cross,
+  norm,
+  multiply,
+  divide,
+  subtract,
+  add,
+  BigNumber,
+  dot,
+} from 'mathjs';
+import {
+  TLE,
   PointOfOrbiting,
   ScheduleRequirementsDTO,
   TImeFrame,
+  Vec3,
 } from './dto/ScheduleRequirements.dto';
+import { OrbitService } from './orbit.service';
+import { getKeplerianFromRV } from './utils/getKeplerianFromRV';
+import fetch from 'cross-fetch';
+import { KeepTrackSatellite } from './dto/keeptrack-satellite.dto';
 
 @Injectable()
 export class ScheduleService {
   EARTH_RADIUS = 6371;
   EARTH_ROTATION_SPEED = 1670 / 3600;
   ORBITAL_VELOCITY = 7.12;
+  ALTITUDE_AT_ENTRY = 750;
+
+  INTERVAL_DAYS = 3;
+  TOTAL_MONTHS = 6;
+  SAMPLES_PER_ORBIT = 100;
+
+  constructor(private readonly orbitService: OrbitService) {}
+
+  // Normalize a vector
+  normalize(v: Vec3): Vec3 {
+    const length = norm(v) as any;
+    if (!length || length === 0) throw new Error('Zero-length vector');
+    return multiply(v, 1 / length) as Vec3;
+  }
+
+  getOrbitPoints(
+    tleLine1: string,
+    tleLine2: string,
+    startDate: Date,
+    samples: number,
+  ): satellite.EciVec3<number>[] {
+    const satrec = satellite.twoline2satrec(tleLine1, tleLine2);
+    const periodMinutes = 1440 / satrec.no; // orbital period in minutes
+    const orbitPoints: satellite.EciVec3<number>[] = [];
+
+    for (let i = 0; i < samples; i++) {
+      const timeOffsetMin = (periodMinutes / samples) * i;
+      const date = new Date(startDate.getTime() + timeOffsetMin * 60 * 1000);
+      const { position } = satellite.propagate(satrec, date);
+      if (!position || position === true) {
+        continue; // skip invalid positions
+      }
+      orbitPoints.push(position);
+    }
+
+    return orbitPoints;
+  }
 
   estimateLEOEntry(lat, lon, rocket_family, azimuth = 90, burnTime = 480) {
+    lon = parseFloat(lon);
     let earthRotationOffset = 0;
     let distanceTraveled = 0;
 
     if (rocket_family === 'Falcon') {
-      // Falcon 9 specific parameters
-      const STAGE_1_BURN = 162; // seconds (approx)
-      const STAGE_2_BURN = 348; // seconds (approx)
+      // Falcon 9 parameters
+      const STAGE_1_BURN = 162; // seconds
+      const STAGE_2_BURN = 348; // seconds
       const TOTAL_BURN_TIME = STAGE_1_BURN + STAGE_2_BURN;
 
-      // Approximate how far the rocket moves east due to Earth's rotation during ascent
+      // Earth's rotation offset
       const launchLatRad = lat * (Math.PI / 180);
       const rotationSpeedAtLat =
         this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
-      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME; // km moved due to Earth's rotation
+      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME; // km
 
-      // Approximate rocket movement in the launch azimuth direction
-      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2; // Average speed assumption
+      // Approx rocket movement
+      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2;
     } else if (rocket_family === 'Long March') {
-      // Long March specific parameters (general estimate for LEO insertion)
-      const STAGE_1_BURN = 170; // seconds (approx)
-      const STAGE_2_BURN = 430; // seconds (approx)
+      // Similar approach
+      const STAGE_1_BURN = 170;
+      const STAGE_2_BURN = 430;
       const TOTAL_BURN_TIME = STAGE_1_BURN + STAGE_2_BURN;
 
-      // Approximate how far the rocket moves east due to Earth's rotation during ascent
       const launchLatRad = lat * (Math.PI / 180);
       const rotationSpeedAtLat =
         this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
-      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME; // km moved due to Earth's rotation
-
-      // Approximate rocket movement in the launch azimuth direction
-      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2; // Average speed assumption
+      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME;
+      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2;
     } else {
+      // Generic fallback
       const launchLatRad = lat * (Math.PI / 180);
       const rotationSpeedAtLat =
         this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
-      earthRotationOffset = rotationSpeedAtLat * burnTime; // km moved due to Earth's rotation
-
-      distanceTraveled = (this.ORBITAL_VELOCITY * burnTime) / 2; // Average speed assumption
+      earthRotationOffset = rotationSpeedAtLat * burnTime;
+      distanceTraveled = (this.ORBITAL_VELOCITY * burnTime) / 2;
     }
 
     const lonOffset =
@@ -119,45 +171,279 @@ export class ScheduleService {
     });
   }
 
-  async calculateSurvivalRate(
-    points_of_orbiting: PointOfOrbiting[],
-    point_of_interest?: PointOfInterest,
-  ) {
-    if (!point_of_interest) return null;
+  async calculateInterceptionsForAll(
+    opts_for_orbiting: Array<{
+      time: Date;
+      point: Vec3;
+      orbit: Vec3[];
+      launch: any;
+    }>,
+  ): Promise<
+    Array<{
+      point: Vec3;
+      launch: any;
+      interceptions: Array<KeepTrackSatellite>;
+      interceptions_count: number;
+    }>
+  > {
+    const res = await fetch('https://api.keeptrack.space/v2/sats');
+    if (!res.ok) {
+      throw new HttpException(
+        `HTTP error! Status: ${res.status}`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
-    return points_of_orbiting.map((orbit) => {
-      if (!orbit.altitude) orbit.altitude = 750; // Default altitude for LEO
-      const { latitude: lat, longitude: lng, altitude: alt } = orbit;
+    const data: KeepTrackSatellite[] = await res.json();
+    if (!Array.isArray(data)) {
+      throw new HttpException(
+        'Expected an array of satellites',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
-      return orbit;
+    const objects: Array<{ satelite: KeepTrackSatellite; orbit: Vec3[] }> =
+      data.map((sat) => ({
+        satelite: sat,
+        orbit: this.generateEllipseFromTLE(
+          sat.tle1,
+          sat.tle2,
+          this.SAMPLES_PER_ORBIT,
+        ),
+      }));
+
+    console.log('The objects are: ');
+    console.log(objects);
+
+    return opts_for_orbiting.map((opt) => {
+      const point = opt.point;
+      const intercepted: Array<KeepTrackSatellite> = [];
+      for (const obj of objects) {
+        if (this.checkOrbitIntersection(opt.orbit, obj.orbit)) {
+          intercepted.push({ ...obj.satelite });
+        }
+      }
+
+      console.log('The intercepted for this point are: ');
+      console.log(intercepted);
+
+      return {
+        point: point,
+        launch: opt.launch,
+        interceptions: intercepted,
+        interceptions_count: intercepted.length,
+      };
     });
+  }
+
+  checkOrbitIntersection(
+    orbit1: Vec3[],
+    orbit2: Vec3[],
+    thresholdKm = 10,
+  ): boolean {
+    let intersepted = false;
+    for (const p1 of orbit1) {
+      for (const p2 of orbit2) {
+        const d = norm(subtract(p1, p2)) as number;
+        if (d < thresholdKm) {
+          const midPoint: Vec3 = [
+            (p1[0] + p2[0]) / 2,
+            (p1[1] + p2[1]) / 2,
+            (p1[2] + p2[2]) / 2,
+          ];
+          intersepted = true;
+          break;
+        }
+      }
+    }
+    console.log(
+      'interception found: ' +
+        (intersepted === true
+          ? '=======================STAY AWAY================'
+          : 'safe'),
+    );
+    return intersepted;
+  }
+
+  generateEllipseFromTLE(
+    tleLine1: string,
+    tleLine2: string,
+    sampleCount: number,
+  ): Vec3[] {
+    const satrec = satellite.twoline2satrec(tleLine1, tleLine2);
+    const startTime = new Date();
+    const periodSeconds = 86400 / satrec.no; // satrec.no = mean motion (rev/day)
+
+    const points: Vec3[] = [];
+
+    for (let i = 0; i < sampleCount; i++) {
+      const time = new Date(
+        startTime.getTime() + (i * periodSeconds * 1000) / sampleCount,
+      );
+      const positionVelocity = satellite.propagate(satrec, time);
+      const positionEci = positionVelocity.position;
+
+      if (!positionEci || positionEci === true) {
+        continue; // skip invalid positions
+      }
+
+      if (positionEci) {
+        points.push([positionEci.x, positionEci.y, positionEci.z]);
+      }
+    }
+
+    console.log('The points are: ');
+    console.log(points.toString());
+    console.log('---');
+
+    return points;
+  }
+
+  generateEllipseFromTwoECI(
+    r1: Vec3,
+    r2: Vec3,
+    velocity: number,
+    sampleCount: number,
+  ): Vec3[] {
+    const h = cross(r1, r2) as Vec3;
+    const hUnit = this.normalize(h);
+
+    const vDirection = this.normalize(cross(h, r1) as Vec3);
+    const v = multiply(vDirection, velocity) as unknown as Vec3;
+
+    const r1Mag = norm(r1) as number;
+    const vMag = norm(v) as number;
+    const mu = 398600.4418;
+
+    //@ts-ignore
+    const energy = vMag ** 2 / 2 - mu / r1Mag;
+    const a = -mu / (2 * energy);
+    const hMag = norm(cross(r1, v));
+    //@ts-ignore
+    const e = Math.sqrt(1 - hMag ** 2 / (a * mu));
+
+    const eccentricityVector = subtract(
+      multiply(v, vMag ** 2 - mu / r1Mag),
+      multiply(r1, dot(r1, v) / r1Mag),
+    ) as Vec3;
+
+    const eUnit = this.normalize(eccentricityVector);
+    const periapsis = multiply(eUnit, a * (1 - e)) as Vec3;
+
+    const ref1 = this.normalize(periapsis);
+    const ref2 = this.normalize(cross(hUnit, ref1) as Vec3);
+
+    const points: Vec3[] = [];
+    for (let i = 0; i < sampleCount; i++) {
+      const theta = (2 * Math.PI * i) / sampleCount;
+      const r = (a * (1 - e ** 2)) / (1 + e * Math.cos(theta));
+      const point = add(
+        multiply(ref1, r * Math.cos(theta)),
+        multiply(ref2, r * Math.sin(theta)),
+      ) as Vec3;
+      points.push(point);
+    }
+    return points;
+  }
+
+  geodeticToEci(
+    latDeg: number,
+    lonDeg: number,
+    altKm: number,
+    date: Date,
+  ): Vec3 {
+    // Convert degrees to radians
+    const latRad = satellite.degreesToRadians(latDeg);
+    const lonRad = satellite.degreesToRadians(lonDeg);
+
+    // Convert to ECF (Earth-Centered Fixed)
+    const positionEcf = satellite.geodeticToEcf({
+      latitude: latRad,
+      longitude: lonRad,
+      height: altKm,
+    });
+
+    // Compute Greenwich Mean Sidereal Time at given date
+    const gmst = satellite.gstime(date);
+
+    // Convert ECF to ECI
+    const positionEci = satellite.ecfToEci(positionEcf, gmst);
+
+    return [positionEci.x, positionEci.y, positionEci.z];
   }
 
   async schedule({
     time_frame,
     orbit,
-    point_of_interest,
+    points_of_interest,
   }: ScheduleRequirementsDTO) {
     const launches = await this.requestLaunches(orbit);
-
     const filtered = await this.getAdeqateLaunches(launches, orbit, time_frame);
 
+    if (!points_of_interest || points_of_interest?.length < 1) {
+      throw new HttpException(
+        'Expecting at least one point of interest',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const points_of_orbiting = filtered.map(
-      (launch): PointOfOrbiting => ({
-        latitude: launch.pad.location.latitude,
-        longitude: launch.pad.location.longitude,
-        altitude: 750, // Default altitude for LEO
-      }),
+      (launch): { time: Date; point: Vec3; orbit: Vec3[]; launch: any } => {
+        const geoedicPoe = this.estimateLEOEntry(
+          launch.pad.latitude,
+          launch.pad.longitude,
+          launch.rocket.configuration.family,
+        );
+
+        console.log('Geoedic POE:', geoedicPoe);
+
+        const poe = this.geodeticToEci(
+          geoedicPoe.latitude,
+          geoedicPoe.longitude,
+          this.ALTITUDE_AT_ENTRY,
+          new Date(
+            (new Date(launch.window_start).getTime() +
+              new Date(launch.window_start).getTime()) /
+              2,
+          ),
+        );
+        console.log('POE:', poe);
+        const orbit = this.generateEllipseFromTwoECI(
+          poe,
+          points_of_interest![0],
+          this.ORBITAL_VELOCITY,
+          this.SAMPLES_PER_ORBIT,
+        );
+        return {
+          time: new Date(
+            (new Date(launch.window_start).getTime() +
+              new Date(launch.window_start).getTime()) /
+              2,
+          ),
+          point: poe,
+          orbit,
+          launch: launch,
+        };
+      },
     );
 
-    const calculated = await this.calculateSurvivalRate(
-      points_of_orbiting,
-      point_of_interest,
-    );
+    if (
+      !points_of_interest ||
+      !points_of_interest[0] ||
+      !points_of_interest[1]
+    ) {
+      throw new HttpException(
+        'Expecting two points of interest',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const calculated =
+      await this.calculateInterceptionsForAll(points_of_orbiting);
 
     if (!calculated) {
       throw new HttpException(
-        'Brother provide me a target point',
+        'Brother, provide me a target point',
         HttpStatus.BAD_REQUEST,
       );
     }
