@@ -32,8 +32,7 @@ export class ScheduleService {
 
   INTERVAL_DAYS = 3;
   TOTAL_MONTHS = 6;
-  SAMPLES_PER_ORBIT = 500;
-  INTERSECTION_THRESHOLD_KM = 1000;
+  SAMPLES_PER_ORBIT = 100;
 
   constructor(private readonly orbitService: OrbitService) {}
 
@@ -177,8 +176,16 @@ export class ScheduleService {
       time: Date;
       point: Vec3;
       orbit: Vec3[];
+      launch: any;
     }>,
-  ) {
+  ): Promise<
+    Array<{
+      point: Vec3;
+      launch: any;
+      interceptions: Array<KeepTrackSatellite>;
+      interceptions_count: number;
+    }>
+  > {
     const res = await fetch('https://api.keeptrack.space/v2/sats');
     if (!res.ok) {
       throw new HttpException(
@@ -216,14 +223,19 @@ export class ScheduleService {
       console.log('The intercepted for this point are: ');
       console.log(intercepted);
 
-      return point;
+      return {
+        point: point,
+        launch: opt.launch,
+        interceptions: intercepted,
+        interceptions_count: intercepted.length,
+      };
     });
   }
 
   checkOrbitIntersection(
     orbit1: Vec3[],
     orbit2: Vec3[],
-    thresholdKm = 3,
+    thresholdKm = 10,
   ): boolean {
     let intersepted = false;
     for (const p1 of orbit1) {
@@ -240,7 +252,12 @@ export class ScheduleService {
         }
       }
     }
-    console.log('interception found: ', intersepted);
+    console.log(
+      'interception found: ' +
+        (intersepted === true
+          ? '=======================STAY AWAY================'
+          : 'safe'),
+    );
     return intersepted;
   }
 
@@ -363,7 +380,7 @@ export class ScheduleService {
     }
 
     const points_of_orbiting = filtered.map(
-      (launch): { time: Date; point: Vec3; orbit: Vec3[] } => {
+      (launch): { time: Date; point: Vec3; orbit: Vec3[]; launch: any } => {
         const geoedicPoe = this.estimateLEOEntry(
           launch.pad.latitude,
           launch.pad.longitude,
@@ -397,6 +414,7 @@ export class ScheduleService {
           ),
           point: poe,
           orbit,
+          launch: launch,
         };
       },
     );
