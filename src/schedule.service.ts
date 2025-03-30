@@ -18,8 +18,8 @@ export class ScheduleService {
 
   INTERVAL_DAYS = 3;
   TOTAL_MONTHS = 6;
-  SAMPLES_PER_ORBIT = 16;
-  TRESHOLD_KM = 30;
+  SAMPLES_PER_ORBIT = 25;
+  TRESHOLD_KM = 28;
 
   // Normalize a vector
   normalize(v: Vec3): Vec3 {
@@ -243,7 +243,7 @@ export class ScheduleService {
   ): { poi: Vec3; distance: number }[] {
     let count = 0;
     const interceptions: { poi: Vec3; distance: number }[] = [];
-    for (const p1 of orbit1) {
+    outer: for (const p1 of orbit1) {
       for (const p2 of orbit2) {
         const d = norm(subtract(p1, p2)) as number;
         if (d < this.TRESHOLD_KM) {
@@ -251,10 +251,9 @@ export class ScheduleService {
             poi: p2,
             distance: d,
           });
-          if (count > 1) break;
+          if (count > 1) break outer;
           count++;
         }
-        if (count > 1) break;
       }
     }
     if (count > 0) console.log(count + ' interceptions found!');
