@@ -1,19 +1,34 @@
 import { Injectable } from '@nestjs/common';
 import { Vector3 } from 'three';
-import { Satrec, jday } from 'sgp4';
 
+/**
+ * OrbitService:
+ *   - Provides a method to generate TLE lines from an ECI state vector (r, v) at a given epoch.
+ *   - Manually computes the orbital elements and creates TLE lines using a custom formatter.
+ */
 @Injectable()
 export class OrbitService {
   /**
-   * Generate a TLE from an ECI state vector using the SGP4 library in Node.js
-   *
-   * @param r ECI position (km)
-   * @param v ECI velocity (km/s)
-   * @param epoch Date object for the desired epoch
-   * @param satNum Satellite number (e.g., 99999)
-   * @param classification Usually 'U' for unclassified
+   * Universal gravitational parameter for Earth, mu = GM (km^3 / s^2).
+   * Using the WGS-84 Earth GM ~ 398600.4418 km^3/s^2.
    */
-  generateTleFromState(
+  private readonly MU_EARTH = 398600.4418;
+
+  /**
+   * High-level wrapper:
+   *   - Takes an ECI position/velocity (km, km/s),
+   *   - Computes the orbital elements,
+   *   - Generates TLE lines.
+   *
+   * @param r ECI position (km) [THREE.Vector3]
+   * @param v ECI velocity (km/s) [THREE.Vector3]
+   * @param epoch Date for TLE epoch
+   * @param satNum Satellite catalog number
+   * @param classification Usually 'U' for unclassified
+   * @param satelliteName The sat name to embed in line 0 (optional usage)
+   * @returns { line1: string, line2: string }
+   */
+  public generateTleFromState(
     r: Vector3,
     v: Vector3,
     epoch: Date,
@@ -21,243 +36,228 @@ export class OrbitService {
     classification = 'U',
     satelliteName = 'MY-SAT',
   ): { line1: string; line2: string } {
-    // 1) Convert epoch to Julian date
-    const year = epoch.getUTCFullYear();
-    const month = epoch.getUTCMonth() + 1;
-    const day = epoch.getUTCDate();
-    const hour = epoch.getUTCHours();
-    const minute = epoch.getUTCMinutes();
-    const second = epoch.getUTCSeconds();
+    // 1) Compute classical orbital elements from [r, v]
+    const coe = this.rvToCoe(r, v, this.MU_EARTH);
 
-    // jday() returns { whole, fraction }
-    const jdObj = jday(year, month, day, hour, minute, second);
-    const jd = jdObj.whole + jdObj.fraction;
-
-    // 2) Initialize the satellite record
-    const satrec = new Satrec();
-
-    // sgp4init parameters:
-    // gravity model: 72 for WGS72
-    // opsmode: 'i' (improved) or 'a' (afspc)
-    // satellite number, epoch (JD),
-    // bstar, ndot, nddot,
-    // position (x, y, z) in km,
-    // velocity (vx, vy, vz) in km/s
-    satrec.sgp4init(
-      72,
-      'i',
-      satNum,
-      jd,
-      0.0, // bstar
-      0.0, // ndot
-      0.0, // nddot
-      r.x,
-      r.y,
-      r.z,
-      v.x,
-      v.y,
-      v.z,
-    );
-
-    // 3) Export TLE lines
-    // The built-in Python sgp4 library has satrec.export_tle(...), but
-    // the JS port does not. So we implement a custom function:
-    const { line1, line2 } = this.exportTle(
-      satrec,
-      satelliteName,
-      classification,
-    );
+    // 2) Format them into TLE lines
+    const { line1, line2 } = this.exportTle(coe, epoch, satNum, classification, satelliteName);
 
     return { line1, line2 };
   }
 
   /**
-   * Custom TLE formatter, adapted from python-sgp4's `export_tle()` approach.
+   * Convert position/velocity in ECI frame to classical orbital elements.
+   *   - inclination (i) [radians]
+   *   - RAAN (Omega) [radians]
+   *   - eccentricity (e)
+   *   - argument of perigee (omega) [radians]
+   *   - mean anomaly (M) at epoch [radians]
+   *   - mean motion (n) [revs/day]
+   *
+   * @param r ECI position vector in km
+   * @param v ECI velocity vector in km/s
+   * @param mu Gravitational parameter km^3 / s^2
    */
-  private exportTle(satrec: Satrec, satName: string, classification = 'U') {
-    // - satrec.epoch:   Julian date
-    // - satrec.ecco:    Eccentricity
-    // - satrec.inclo:   Inclination (radians)
-    // - satrec.nodeo:   RAAN (radians)
-    // - satrec.argpo:   Arg of perigee (radians)
-    // - satrec.mo:      Mean anomaly at epoch (radians)
-    // - satrec.no:      Mean motion (radians/min)
-    // - satrec.bstar:   B* drag term
-    //
-    // - TLE wants:
-    //   1) Line 1: 1 NNNNNU YYDDD.DDDDDDDD .xxxxxxxx +yyyyy-zz ...
-    //   2) Line 2: 2 NNNNN iiii.iiii rrrr.rrrr eeeeeee gggg.gggg MMMM.MMMM nnnn.nnnnnnnn
-    //
-    //   where:
-    //    - i (deg), RAAN (deg), e, ArgPerigee (deg), M (deg), n (rev/day)
+  private rvToCoe(r: Vector3, v: Vector3, mu: number) {
+    // Magnitudes
+    const R = r.length();
+    const V = v.length();
 
-    // 1) Satellite number
-    const satNum = Math.abs(satrec.satnum || 99999);
+    // Specific angular momentum h = r x v
+    const hVec = new Vector3().copy(r).cross(v);
+    const h = hVec.length();
 
-    // 2) Compute TLE epoch format: last two digits of year + day of year with fractional day
-    //    from the satrec.epoch which is in JD
-    const jdFloor = Math.floor(satrec.epoch);
-    const dayFraction = satrec.epoch - jdFloor;
-    // Convert JD back to a calendar date to format TLE epoch
-    // JD reference for 1 Jan 1950 is 2433282.5. We'll convert for the TLE epoch year.
-    // But let's do a simpler approach: the SGP4 library also stores epochyr/epochdays?
-    // This might only be set properly for older expansions. Let's do our own approach:
+    // Node vector n = k x h
+    const kVec = new Vector3(0, 0, 1);
+    const nVec = new Vector3().copy(kVec).cross(hVec);
+    const n = nVec.length();
 
-    // The reference epoch for TLE is 1950, but usually, TLE's two-digit year is "00" for 2000-2099.
-    // Let's do an approximate approach using the same method the Python library does.
-    // That library sets satrec.epochyr and satrec.epochtyper to handle the year offset.
-    // If that's not set, we guess from the JD. We'll assume it's 20xx for simplicity.
+    // Eccentricity vector e = 1/mu * ( (v x h) - mu * r/|r| )
+    const eVec = new Vector3()
+      .copy(v)
+      .cross(hVec)
+      .multiplyScalar(1 / mu)
+      .sub(new Vector3().copy(r).multiplyScalar(1 / R));
+    const e = eVec.length();
 
-    // The python-sgp4 does:
-    //    (year, day_of_year) = days2mdhms_frac(eForEpoch) -> sets epochyr, epochdays
-    // We'll do a simpler approach: let's parse satrec.epochdays & epochyr if they exist:
-    let epochYear = satrec.epochyr;
-    let epochDays = satrec.epochdays;
+    // Inclination i = arccos(h_z / |h|)
+    const i = Math.acos(hVec.z / h);
 
-    // If the library didn't set them, we'll approximate
-    if (!epochYear || !epochDays) {
-      // We'll do a quick J2000 approach:
-      const JD_JAN_1_2000 = 2451545.0;
-      // Days from 2000
-      const daysSince2000 = satrec.epoch - JD_JAN_1_2000;
-      // Approx year
-      const approximateYear = 2000 + Math.floor(daysSince2000 / 365.25);
-      epochYear = approximateYear % 100; // TLE uses last two digits
-      // Day of year
-      const yearStartJD =
-        Date.UTC(approximateYear, 0, 1, 0, 0, 0) / 86400000 + 2440587.5; // Convert from UTC to JD
-      const doy = satrec.epoch - yearStartJD + 1;
-      epochDays = doy;
+    // RAAN (Omega): angle in XY plane from X-axis to nVec
+    let Omega = 0;
+    if (n >= 1e-8) {
+      // If nVec is not near zero
+      Omega = Math.acos(nVec.x / n);
+      if (nVec.y < 0) {
+        Omega = 2 * Math.PI - Omega;
+      }
+    } else {
+      // Equatorial orbit fallback
+      Omega = 0;
     }
 
-    // Format day of year with fraction
-    const dayOfYear = Math.floor(epochDays);
-    const fractionOfDay = epochDays - dayOfYear;
-    const dayFractionString = (dayOfYear + fractionOfDay)
-      .toFixed(8)
-      .padStart(11, '0');
+    // Argument of perigee (omega)
+    let argp = 0;
+    if (n >= 1e-8 && e > 1e-8) {
+      argp = Math.acos(nVec.dot(eVec) / (n * e));
+      if (eVec.z < 0) {
+        argp = 2 * Math.PI - argp;
+      }
+    } else {
+      argp = 0;
+    }
 
-    // 3) Format B* (drag term)
-    // "SGP4" B* can be around e-05 -> e+05 range
-    // TLE format: ±x.xxxxxx±yy (mantissa + exponent)
-    const bstar = satrec.bstar || 0.0;
-    const bstarString = this.formatExponential(bstar);
+    // True anomaly (theta)
+    let trueAnomaly = 0;
+    if (e > 1e-8) {
+      const rDotE = r.dot(eVec);
+      trueAnomaly = Math.acos(rDotE / (R * e));
+      if (r.dot(v) < 0) {
+        trueAnomaly = 2 * Math.PI - trueAnomaly;
+      }
+    } else {
+      // Circular orbit fallback
+      // For circular orbits, we define true anomaly wrt nVec if e ~ 0
+      trueAnomaly = 0;
+    }
 
-    // 4) Format Mean motion in rev/day, not rad/min
-    const nRadMin = satrec.no; // rad/min
-    const nRevDay = (nRadMin * 1440) / (2 * Math.PI);
+    // Semi-major axis
+    const energy = 0.5 * V * V - (mu / R);
+    const a = -mu / (2 * energy);
 
-    // 5) Build line 1
-    // Example:
-    // 1 25544U 98067A   21060.54513889  .00000272  00000-0  10270-4 0  9006
-    // Let’s do minimal fields: (we’ll set NDOT=0, NDDOT=0 for simplicity)
+    // Convert true anomaly -> eccentric anomaly E -> mean anomaly M
+    // E = 2 * atan( sqrt((1-e)/(1+e)) * tan(trueAnomaly/2) )
+    let E = 0;
+    if (e < 1e-8) {
+      // circular
+      // E ~ theta for a circular orbit
+      E = trueAnomaly;
+    } else {
+      E =
+        2 *
+        Math.atan2(
+          Math.sqrt(1 - e) * Math.sin(trueAnomaly / 2),
+          Math.sqrt(1 + e) * Math.cos(trueAnomaly / 2),
+        );
+    }
+    // Normalize E to [0, 2pi)
+    if (E < 0) {
+      E += 2 * Math.PI;
+    }
+
+    // Mean anomaly M = E - e*sin(E)
+    const M = E - e * Math.sin(E);
+
+    // Mean motion n [revs per day] = sqrt(mu / a^3) in rad/s => convert to rev/day
+    const nRadSec = Math.sqrt(mu / (a * a * a));
+    const nRevDay = (nRadSec * 86400) / (2 * Math.PI);
+
+    return {
+      semiMajorAxis: a,
+      eccentricity: e,
+      inclination: i,         // radians
+      raan: Omega,            // radians
+      argOfPerigee: argp,     // radians
+      meanAnomaly: M,         // radians
+      meanMotion: nRevDay,    // rev/day
+    };
+  }
+
+  /**
+   * Given orbital elements + epoch, produce TLE lines (Line 1 & 2).
+   * For the sake of simplicity, we set BSTAR = 0, NDOT/6 = 0, NDDOT = 0.
+   */
+  private exportTle(
+    coe: {
+      semiMajorAxis: number;
+      eccentricity: number;
+      inclination: number;   // radians
+      raan: number;          // radians
+      argOfPerigee: number;  // radians
+      meanAnomaly: number;   // radians
+      meanMotion: number;    // rev/day
+    },
+    epoch: Date,
+    satNum: number,
+    classification: string,
+    satelliteName: string,
+  ): { line1: string; line2: string } {
+    // ==============
+    // 0) TLE epoch
+    //    TLE uses YYDDD.ddddd format. Let's build that from the actual date:
+    //    - Year in last two digits
+    //    - Day of year with fraction
+    // ==============
+    const year = epoch.getUTCFullYear();
+    const twoDigitYear = year % 100; // e.g. 2025 => 25
+    const startOfYear = Date.UTC(year, 0, 1, 0, 0, 0);
+    const dayOfYearNum = (epoch.getTime() - startOfYear) / 86400000 + 1;
+    // fraction
+    const dayOfYear = dayOfYearNum.toFixed(8).padStart(11, '0'); // e.g. "  91.29140000"
+
+    // ==============
+    // 1) Format line 1
+    //    We set NDOT/6 = 0.00000000, NDDOT = 0, BSTAR = 0
+    // ==============
     const line1SatNum = satNum.toString().padStart(5, '0');
-    const line1EpochYear = epochYear.toString().padStart(2, '0');
-    const line1EpochDays = dayFractionString; // e.g. 060.54513889
+    const epochStr = `${twoDigitYear.toString().padStart(2, '0')}${dayOfYear}`;
 
-    // We'll set NDOT = .00000000 + exponent, NDDOT=0, B* from above
-    const ndot = 0.0;
-    const ndotStr = this.formatExponential(ndot).replace('.', '');
-    // NDDOT in TLE is typically 5 digits for exponent
-    const nddot = 0.0;
-    const nddotStr = `0 00000-0`; // Usually kept at 0 if not known
+    // Example TLE fields in line 1:
+    // 1 NNNNNU AAAAA YYDDD.DDDDDDDD .XXXXXXXX  ±Y.YYYYY- Z  ...
+    // We'll zero them out for simplicity
+    const ndot_str = '.00000000'; // 8 digits
+    const nddot_str = ' 00000-0'; // 7 characters
+    const bstar_str = ' 00000-0'; // 7 characters
 
-    // classification:
-    // 'U' means unclassified
-    const line1 =
-      `1 ${line1SatNum}${classification} ` +
-      `${line1EpochYear}${line1EpochDays} ` +
-      `${ndotStr} ` +
-      `${nddotStr} ` +
-      `${bstarString} ` +
-      `0  9999`; // The "0" is ephemeris type, "9999" is element set number
+    let line1 =
+      `1 ${line1SatNum}${classification} ` + // e.g. "1 99999U "
+      `${epochStr} ` +                      // e.g. "25089.12345678 "
+      `${ndot_str} ` +                      // .00000000
+      `${nddot_str} ` +                     // 00000-0
+      `${bstar_str} ` +                     // 00000-0
+      ` 0  9999`;                            // ephemeris type 0, element set # 9999
 
-    // 6) Build line 2
-    // Example:
-    // 2 25544  51.6448 316.3225 0004371  73.8203 321.3235 15.48961739255038
-
+    // ==============
+    // 2) Format line 2
+    //    i (deg), raan (deg), e (no decimal), argp (deg), M (deg), n (rev/day), rev# (we set 00001)
+    // ==============
     // Convert angles from radians to degrees
-    const inclDeg = (satrec.inclo * 180) / Math.PI;
-    const raanDeg = (satrec.nodeo * 180) / Math.PI;
-    const ecco = satrec.ecco; // eccentricity, no decimal point in TLE
-    const argpDeg = (satrec.argpo * 180) / Math.PI;
-    const moDeg = (satrec.mo * 180) / Math.PI;
+    const iDeg = (coe.inclination * 180) / Math.PI;
+    const raanDeg = (coe.raan * 180) / Math.PI;
+    const argpDeg = (coe.argOfPerigee * 180) / Math.PI;
+    const mDeg = (coe.meanAnomaly * 180) / Math.PI;
+    const eStr = coe.eccentricity.toString().split('.').join('').slice(0, 7); // up to 7 digits, no decimal point
+    const nStr = coe.meanMotion.toFixed(8).padStart(11, ' '); // 11 wide, 8 decimals
 
-    // Format eccentricity as 7 digits, no decimal
-    const eccoStr = ecco
-      .toString()
-      .slice(2, 2 + 7)
-      .padEnd(7, '0'); // e.g. "0004371"
+    const revNumber = 1; // Arbitrary
 
-    // Format mean motion with 8 decimals
-    const nStr = nRevDay.toFixed(8);
-
-    // We'll guess revolution number at epoch as 0
-    const revNumAtEpoch = 1; // or pick your own
-
-    const line2 =
+    let line2 =
       `2 ${line1SatNum} ` +
-      `${inclDeg.toFixed(4).padStart(8, ' ')} ` +
+      `${iDeg.toFixed(4).padStart(8, ' ')} ` +
       `${raanDeg.toFixed(4).padStart(8, ' ')} ` +
-      `${eccoStr} ` +
+      `${eStr.padStart(7, '0')} ` + // zero-pad e (7 digits)
       `${argpDeg.toFixed(4).padStart(8, ' ')} ` +
-      `${moDeg.toFixed(4).padStart(8, ' ')} ` +
-      `${nStr.padStart(11, ' ')}${revNumAtEpoch.toString().padStart(5, ' ')}`;
+      `${mDeg.toFixed(4).padStart(8, ' ')} ` +
+      `${nStr}${revNumber.toString().padStart(5, ' ')}`;
 
-    // 7) Add checksums
-    const line1Chk = this.checksum(line1);
-    const line2Chk = this.checksum(line2);
+    // ==============
+    // 3) Compute checksums for line1 & line2
+    // ==============
+    const line1Chk = this.computeChecksum(line1);
+    const line2Chk = this.computeChecksum(line2);
 
-    const line1Final = line1 + line1Chk.toString();
-    const line2Final = line2 + line2Chk.toString();
+    line1 += line1Chk.toString();
+    line2 += line2Chk.toString();
 
-    // For neatness, you might also want to keep a line 0 with satelliteName
-    // "0 MY-SAT"
-    return { line1: line1Final, line2: line2Final };
+    return { line1, line2 };
   }
 
   /**
-   * Format a floating number in TLE '±x.xxxxx-yy' style
+   * Simple TLE checksum function:
+   *   - Sum of all digits + each '-' sign counts as 1
+   *   - Then mod 10
    */
-  private formatExponential(value: number): string {
-    // e.g., 0.0001234 => ".1234-3"
-    // in TLE: sign is in front, decimal after first digit, exponent is always 2 digits with sign
-    const sign = value >= 0 ? ' ' : '-';
-
-    // Convert to scientific notation
-    const scientific = value.toExponential(5); // e.g. "-1.23456e-5"
-    // Parse it
-    const match = /^(-?)(\d\.\d+)[eE]([+-]\d+)$/.exec(scientific);
-    if (!match) {
-      return ' 00000-0'; // fallback
-    }
-
-    const mantissaSign = match[1];
-    const mantissa = match[2]; // e.g. "1.23456"
-    let exponent = parseInt(match[3], 10); // e.g. -5
-
-    // TLE has a weird format: " x.xxxxx±yy"
-    // We'll keep 5 digits in the fractional part
-    // e.g. " 12345-5"
-    // sign char at position 0 if negative
-    let signChar = mantissaSign === '-' ? '-' : ' ';
-    // remove decimal point
-    const mantissaDigits = mantissa.replace('.', '').slice(0, 5).padEnd(5, '0'); // "12345"
-
-    // exponent must be 2 digits
-    let exponentSign = exponent >= 0 ? '+' : '-';
-    exponent = Math.abs(exponent);
-    const exponentStr = exponent.toString().padStart(1, '0');
-
-    return `${signChar}.${mantissaDigits}${exponentSign}${exponentStr}`;
-  }
-
-  /**
-   * Simple checksum function for TLE lines:
-   *  - Sum of all digits (not letters or periods) + count of '-' sign as 1
-   *  - Then mod 10
-   */
-  private checksum(line: string): number {
+  private computeChecksum(line: string): number {
     let sum = 0;
     for (let i = 0; i < line.length; i++) {
       const c = line.charAt(i);

@@ -20,7 +20,7 @@ export class ScheduleService {
   INTERVAL_DAYS = 3;
   TOTAL_MONTHS = 6;
   SAMPLES_PER_ORBIT = 500;
-  INTERSECTION_THRESHOLD_KM = 3;
+  INTERSECTION_THRESHOLD_KM = 1000;
 
   constructor(private readonly orbitService: OrbitService) {}
 
@@ -41,9 +41,7 @@ export class ScheduleService {
       if (!position || position === true) {
         continue; // skip invalid positions
       }
-      if (position) {
-        orbitPoints.push(position);
-      }
+      orbitPoints.push(position);
     }
 
     return orbitPoints;
@@ -126,46 +124,38 @@ export class ScheduleService {
     let distanceTraveled = 0;
 
     if (rocket_family === 'Falcon') {
-      // Falcon 9 specific parameters
-      const STAGE_1_BURN = 162; // seconds (approx)
-      const STAGE_2_BURN = 348; // seconds (approx)
+      // Falcon 9 parameters
+      const STAGE_1_BURN = 162; // seconds
+      const STAGE_2_BURN = 348; // seconds
       const TOTAL_BURN_TIME = STAGE_1_BURN + STAGE_2_BURN;
 
-      // Approximate how far the rocket moves east due to Earth's rotation during ascent
+      // Earth's rotation offset
       const launchLatRad = lat * (Math.PI / 180);
-      const rotationSpeedAtLat =
-        this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
-      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME; // km moved due to Earth's rotation
+      const rotationSpeedAtLat = this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
+      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME; // km
 
-      // Approximate rocket movement in the launch azimuth direction
-      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2; // Average speed assumption
+      // Approx rocket movement
+      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2;
     } else if (rocket_family === 'Long March') {
-      // Long March specific parameters (general estimate for LEO insertion)
-      const STAGE_1_BURN = 170; // seconds (approx)
-      const STAGE_2_BURN = 430; // seconds (approx)
+      // Similar approach
+      const STAGE_1_BURN = 170;
+      const STAGE_2_BURN = 430;
       const TOTAL_BURN_TIME = STAGE_1_BURN + STAGE_2_BURN;
 
-      // Approximate how far the rocket moves east due to Earth's rotation during ascent
       const launchLatRad = lat * (Math.PI / 180);
-      const rotationSpeedAtLat =
-        this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
-      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME; // km moved due to Earth's rotation
-
-      // Approximate rocket movement in the launch azimuth direction
-      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2; // Average speed assumption
+      const rotationSpeedAtLat = this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
+      earthRotationOffset = rotationSpeedAtLat * TOTAL_BURN_TIME;
+      distanceTraveled = (this.ORBITAL_VELOCITY * TOTAL_BURN_TIME) / 2;
     } else {
+      // Generic fallback
       const launchLatRad = lat * (Math.PI / 180);
-      const rotationSpeedAtLat =
-        this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
-      earthRotationOffset = rotationSpeedAtLat * burnTime; // km moved due to Earth's rotation
-
-      distanceTraveled = (this.ORBITAL_VELOCITY * burnTime) / 2; // Average speed assumption
+      const rotationSpeedAtLat = this.EARTH_ROTATION_SPEED * Math.cos(launchLatRad);
+      earthRotationOffset = rotationSpeedAtLat * burnTime;
+      distanceTraveled = (this.ORBITAL_VELOCITY * burnTime) / 2;
     }
 
     const lonOffset =
-      ((earthRotationOffset + distanceTraveled) /
-        (2 * Math.PI * this.EARTH_RADIUS)) *
-      360;
+      ((earthRotationOffset + distanceTraveled) / (2 * Math.PI * this.EARTH_RADIUS)) * 360;
     const newLon = (lon + lonOffset) % 360;
 
     return { latitude: lat, longitude: newLon };
@@ -173,10 +163,7 @@ export class ScheduleService {
 
   async requestLaunches(orbit: string) {
     if (orbit !== 'LEO') {
-      throw new HttpException(
-        'Only LEO orbit is supported for now',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException('Only LEO orbit is supported for now', HttpStatus.BAD_REQUEST);
     }
 
     const upcomingLaunches = await fetch(
@@ -191,10 +178,7 @@ export class ScheduleService {
     const launchesResp = await upcomingLaunches.json();
     const launches = launchesResp.results;
     if (!Array.isArray(launches)) {
-      throw new HttpException(
-        'Expected an array of launches',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException('Expected an array of launches', HttpStatus.BAD_REQUEST);
     }
     return launches;
   }
@@ -239,77 +223,76 @@ export class ScheduleService {
 
     return opts_for_orbiting.map((opt) => {
       const point = opt.point;
-
       const interceptions = this.countInterceptions(opt.time, point, satelite);
-
       return point;
     });
   }
 
+  /**
+   * Example function that tries to create a TLE from two "points of interest" (which we
+   * treat as ECI vectors) and a date of insertion. Adjust as necessary for your real logic.
+   */
   async calculateTleOfSatelite(
-    poi1: PointOfInterest,
+    poi1: PointOfInterest, // assumed to be a {x,y,z} or { lat, lon } with a custom definition
     poi2: PointOfInterest,
     date_of_entering: string,
     speed: number = 7.48,
   ): Promise<TLE> {
-    // Epoch (timestamp for pos1)
+    // Convert your "points of interest" into 3D vectors. Here we assume they are
+    // already { x, y, z } in the same coordinate frame. If not, you must convert them.
+    const pos1 = new Vector3(poi1.x, poi1.y, poi1.z);
+    const pos2 = new Vector3(poi2.x, poi2.y, poi2.z);
+
+    // Epoch for pos1
     const t1 = new Date(date_of_entering);
 
-    // === PROCESSING ===
+    // Direction from pos1 to pos2
+    const direction = new Vector3().subVectors(pos2, pos1).normalize();
+    // Multiply by known speed => velocity
+    const velocity = direction.clone().multiplyScalar(speed);
 
-    // Get direction unit vector from pos1 to pos2
-    const direction = new Vector3().subVectors(poi1, poi2).normalize();
-
-    // Scale direction by known speed to get velocity vector
-    const velocity = direction.multiplyScalar(speed);
-
-    const tiles = this.orbitService.generateTleFromState(
-      direction,
+    // Now use our OrbitService to produce TLE from [pos1, velocity].
+    // In your original code, you used (direction, velocity) as if direction were the ECI position.
+    // Make sure you supply the actual position vector here.
+    const tle = this.orbitService.generateTleFromState(
+      pos1,
       velocity,
       t1,
       99999, // satellite number
-      'U', // classification
-      'MY-SAT', // name
+      'U',
+      'MY-SAT',
     );
 
     return {
-      tle1: tiles.line1,
-      tle2: tiles.line2,
+      tle1: tle.line1,
+      tle2: tle.line2,
     };
   }
 
-  async schedule({
-    time_frame,
-    orbit,
-    points_of_interest,
-  }: ScheduleRequirementsDTO) {
+  async schedule({ time_frame, orbit, points_of_interest }: ScheduleRequirementsDTO) {
     const launches = await this.requestLaunches(orbit);
-
     const filtered = await this.getAdeqateLaunches(launches, orbit, time_frame);
 
     const points_of_orbiting = filtered.map(
-      (
-        launch,
-      ): {
-        time: Date;
-        point: TLE;
-      } => ({
+      (launch): { time: Date; point: TLE } => ({
         time: new Date(
           (new Date(launch.window_start).getTime() +
             new Date(launch.window_start).getTime()) /
             2,
         ),
         point: {
-          tle1: '1 00012U 59001B   25087.80297988  .00000771  00000+0  42819-3 0  9992',
-          tle2: '2 00012  32.9143 353.8702 1651680 267.9557  73.1899 11.47653321480128',
+          tle1:
+            '1 00012U 59001B   25087.80297988  .00000771  00000+0  42819-3 0  9992',
+          tle2:
+            '2 00012  32.9143 353.8702 1651680 267.9557  73.1899 11.47653321480128',
         },
       }),
     );
 
     if (
-      points_of_interest === undefined ||
-      points_of_interest[0] === undefined ||
-      points_of_interest[1] === undefined
+      !points_of_interest ||
+      !points_of_interest[0] ||
+      !points_of_interest[1]
     ) {
       throw new HttpException(
         'Expecting two points of interest',
@@ -317,6 +300,7 @@ export class ScheduleService {
       );
     }
 
+    // Generate a TLE from your custom logic
     const satelite = await this.calculateTleOfSatelite(
       points_of_interest[0],
       points_of_interest[1],
@@ -330,7 +314,7 @@ export class ScheduleService {
 
     if (!calculated) {
       throw new HttpException(
-        'Brother provide me a target point',
+        'Brother, provide me a target point',
         HttpStatus.BAD_REQUEST,
       );
     }
