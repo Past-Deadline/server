@@ -5,19 +5,18 @@ import * as satellite from 'satellite.js';
 import { KeepTrackSatellite } from './dto/keeptrack-satellite.dto';
 import { HeatmapDto } from './dto/heatmap.dto';
 import { ScheduleRequirementsDTO } from './dto/ScheduleRequirements.dto';
-import { count } from 'console';
 
 @Injectable()
 export class AppService {
   /**
    * Heatmap logic:
-   *  - Takes optional bounding region (lat/lon).
-   *  - minAlt, maxAlt са задължителни.
-   *  - Fetches sats from KeepTrack
-   *  - Propagates each to `timestamp`
-   *  - Converts ECI -> LLA
-   *  - Filters those within bounding box & altitude constraints
-   *  - Returns GeoJSON FeatureCollection
+   *  - Приема опционално bounding region (lat/lon).
+   *  - minAlt и maxAlt са задължителни.
+   *  - Изтегля сателитите от KeepTrack
+   *  - Пропагира всеки сателит до посочения timestamp
+   *  - Конвертира от ECI към LLA
+   *  - Филтрира по bounding box, altitude и по тип (ако е зададен)
+   *  - Връща GeoJSON FeatureCollection
    */
   async heatmap(heatmapDto: HeatmapDto) {
     const {
@@ -28,13 +27,11 @@ export class AppService {
       timestamp,
       minAlt,
       maxAlt,
-      zoom,
       types,
-      timeDirection, // currently not used, but available
     } = heatmapDto;
 
     try {
-      // 1. Fetch satellites from keeptrack
+      // 1. Изтегля сателитите от KeepTrack
       const res = await fetch('https://api.keeptrack.space/v2/sats');
       if (!res.ok) {
         throw new HttpException(
@@ -51,10 +48,10 @@ export class AppService {
         );
       }
 
-      // 2. Prepare date object from timestamp
+      // 2. Създаваме обект Date от timestamp-а
       const targetDate = new Date(timestamp);
 
-      // We'll store results in this array
+      // Масив за резултатите
       const results: Array<{
         name: string;
         lat: number;
@@ -62,55 +59,53 @@ export class AppService {
         alt: number;
       }> = [];
 
-      // 3. Loop over each satellite from KeepTrack
+      // 3. Обхождаме всеки сателит
       for (const sat of data) {
         try {
-          // (Optional) Filter by "type" array if provided
+          // Филтриране по тип, ако е зададен
           if (Array.isArray(types) && types.length > 0) {
-            if (!types.includes(sat.type)) {
-              // skip if this sat's type is not in the allowed set
-              continue;
+            const allowedTypes = new Set(types);
+            // Ако сателитът е класифициран (1, 2 или 3)
+            if (sat.type === 1 || sat.type === 2 || sat.type === 3) {
+              if (!allowedTypes.has(sat.type)) {
+                continue;
+              }
+            } else {
+              // За некласифицирани обекти (тип, различен от 1,2,3)
+              if (!allowedTypes.has("undefined")) {
+                continue;
+              }
             }
           }
 
-          // Convert TLE => satrec
+          // Конвертиране на TLE към satrec
           const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
           const posVel = satellite.propagate(satrec, targetDate);
           if (!posVel.position || posVel.position === true) {
-            // skip invalid or unpropagatable TLE
             continue;
           }
 
-          // 4. Convert ECI -> Geodetic
+          // Преобразуване от ECI към геодезически координати
           const positionEci = posVel.position;
           const gmst = satellite.gstime(targetDate);
           const positionGd = satellite.eciToGeodetic(positionEci, gmst);
 
-          // lat/lon in radians, alt in km
           const latDeg = satellite.degreesLat(positionGd.latitude);
           const lonDeg = satellite.degreesLong(positionGd.longitude);
           const altKm = positionGd.height;
 
-          // 5. Filter by bounding box only if provided
+          // Филтриране по bounding box, ако е зададен
           if (minLat !== undefined && latDeg < minLat) continue;
           if (maxLat !== undefined && latDeg > maxLat) continue;
           if (minLon !== undefined && lonDeg < minLon) continue;
           if (maxLon !== undefined && lonDeg > maxLon) continue;
 
-          // 6. Filter by altitude (now required)
+          // Филтриране по височина
           if (altKm < minAlt || altKm > maxAlt) {
             continue;
           }
 
-          // 7. Optional zoom logic: skip satellites if zoom is too low
-          if (zoom !== undefined && zoom < 3) {
-            // Example: skip ~70% to lighten load
-            if (Math.random() < 0.7) {
-              continue;
-            }
-          }
-
-          // 8. All filters passed => add to results
+          // Добавяне към резултатите
           results.push({
             name: sat.name,
             lat: parseFloat(latDeg.toFixed(4)),
@@ -118,11 +113,11 @@ export class AppService {
             alt: parseFloat(altKm.toFixed(2)),
           });
         } catch (error) {
-          // skip any invalid TLE or other errors
+          // Пропускаме сателити с невалидни TLE или други грешки
         }
       }
 
-      // 9. Convert results to GeoJSON FeatureCollection
+      // Преобразуваме резултатите в GeoJSON FeatureCollection
       const geoJson = {
         type: 'FeatureCollection',
         crs: {

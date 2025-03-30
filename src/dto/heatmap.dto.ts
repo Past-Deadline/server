@@ -71,32 +71,14 @@ export class HeatmapDto {
   maxAlt: number;
 
   @ApiProperty({
-    example: 5,
-    description: 'Zoom level from the front-end (optional)',
-    required: false,
-  })
-  @IsNumber()
-  @IsOptional()
-  zoom?: number;
-
-  @ApiProperty({
-    example: 'forward',
-    description: 'Optional direction if you want to move forward/back in time',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  timeDirection?: string;
-
-  @ApiProperty({
-    type: [Number],
+    type: [String],
     required: false,
     description:
-      'Array of satellite "type" codes to include, e.g. [3] for debris or [0,3] for both',
-    example: [0, 3],
+      'Array of satellite "type" codes to include. Valid values: 1 (Active), 2 (Rocket Bodies), 3 (Space Debris) and "undefined" (Unclassified).',
+    example: [1, "undefined"],
   })
   @IsArray()
   @IsOptional()
-  @IsNumber({}, { each: true })
-  types?: number[];
+  // Поддържа както числови стойности, така и стринг "undefined"
+  types?: (number | string)[];
 }
