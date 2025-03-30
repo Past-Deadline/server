@@ -35,7 +35,8 @@
     "satellite.js": "^5.0.0",
     "sgp4": "^1.0.10",
     "swagger-ui-express": "^5.0.1",
-    "three": "^0.175.0"
+    "three": "^0.175.0",
+    "workerpool": "^9.2.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
